@@ -1,0 +1,80 @@
+name: CI Pipeline
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up PHP 8.1
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.1
+          extensions: intl, pcntl, zip, xsl
+          tools: composer
+
+      - name: Install required system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxslt-dev libzip-dev libicu-dev zip unzip git default-jre openssh-client
+
+      - name: Show versions
+        run: |
+          php --version
+          java --version
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add GitLab to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H gitlab.huma-num.fr >> ~/.ssh/known_hosts
+
+      - name: Configure GitLab URL
+        run: git config --global url."git@gitlab.huma-num.fr:".insteadOf "https://gitlab.huma-num.fr/"
+
+      - name: Install project dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Install Symfony CLI
+        run: |
+          curl -sS https://get.symfony.com/cli/installer | bash
+          sudo mv ~/.symfony*/bin/symfony /usr/local/bin/symfony
+
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run PHP-CS-Fixer
+        run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --no-progress
+
+  security:
+    name: Security Checks
+    runs-on: ubuntu-latest
+    needs: build
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run Symfony Security Checker
+        run: symfony security:check --no-interaction
